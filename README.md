@@ -17,7 +17,7 @@ A minimal macOS menu bar app that lets you control system volume by scrolling ov
 ## Preview 
 
 <p align="center">
-  <img src="preview.gif" width="800" alt="preview">
+  <img src="preview.gif" width="380" alt="VolumeScroll menu: a volume slider and output device list, with the volume changing as you scroll">
 </p>
 
 ## Install
