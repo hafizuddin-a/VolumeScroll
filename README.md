@@ -26,7 +26,7 @@
 VolumeScroll is a small menu bar app for Mac. Scroll over its icon, or over its open menu, to turn the volume up
 and down. Click the icon for a Sound menu that looks like the one built into macOS: a slider and your output devices.
 
-- **Scroll** over the icon or the open menu to adjust the volume. A mouse wheel moves one step per notch (about 6%) and a
+- **Scroll** over the icon or the open menu to adjust the volume. A mouse wheel changes it 2% per notch and speeds up when you spin it fast, and a
   trackpad scrolls smoothly. Up is always louder, whichever way natural scrolling is set. **Works great with an external mouse.**
 - **Click** the icon for the Sound menu: a volume slider, your output devices (click one to switch) and a link to Sound
   Settings. It is a real macOS menu, so it takes on the system look, including the glass on macOS 26.
