@@ -35,7 +35,7 @@ and down. Click the icon for a Sound menu that looks like the one built into mac
 - Free and open source, with no subscriptions and no App Store.
 
 <p align="center">
-  <img src="preview.gif" width="380" alt="The VolumeScroll menu: a volume slider and output device list, with the volume changing as you scroll">
+  <img src="preview.gif" width="340" alt="The VolumeScroll menu: a volume slider and output device list, with the volume changing as you scroll">
 </p>
 
 <p align="center">
