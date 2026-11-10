@@ -9,7 +9,7 @@ RESOURCES="$CONTENTS/Resources"
 rm -rf "$APP"
 mkdir -p "$MACOS" "$RESOURCES"
 
-swiftc AppDelegate.swift AudioController.swift SoundPanel.swift main.swift \
+swiftc AppDelegate.swift AudioController.swift BluetoothBattery.swift SoundPanel.swift main.swift \
     -framework Cocoa \
     -framework CoreAudio \
     -framework ServiceManagement \

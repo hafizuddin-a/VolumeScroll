@@ -28,8 +28,8 @@ and down. Click the icon for a Sound menu that looks like the one built into mac
 
 - **Scroll** over the icon or the open menu to adjust the volume. A mouse wheel changes it 2% per notch and speeds up when you spin it fast, and a
   trackpad scrolls smoothly. Up is always louder, whichever way natural scrolling is set. **Works great with an external mouse.**
-- **Click** the icon for the Sound menu: a volume slider, your output devices (click one to switch) and a link to Sound
-  Settings. It is a real macOS menu, so it takes on the system look, including the glass on macOS 26.
+- **Click** the icon for the Sound menu: a volume slider, your output devices (click one to switch, with the battery level for Bluetooth ones) and a
+  link to Sound Settings. It is a real macOS menu, so it takes on the system look, including the glass on macOS 26.
 - The icon shows the current volume as a percentage. **Right-click** it to mute or unmute, open at login, or quit.
 - Minimal. No Dock icon, no account, no network access, and nothing running beyond what it needs.
 - Free and open source, with no subscriptions and no App Store.

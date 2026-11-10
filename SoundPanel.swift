@@ -140,9 +140,13 @@ private final class DeviceRow: HoverRow {
 
     private let circle = NSView()
     private let isSelected: Bool
+    private let deviceName: String
+    private let batteryText = label("", size: 12, color: .secondaryLabelColor)
+    private let batteryIcon = NSImageView()
 
     init(device: OutputDevice, selected: Bool, frame: NSRect) {
         isSelected = selected
+        deviceName = device.name
         super.init(frame: frame)
         accessibilityText = device.name
 
@@ -157,15 +161,49 @@ private final class DeviceRow: HoverRow {
         icon.contentTintColor = selected ? .white : .labelColor
         circle.addSubview(icon)
 
+        // Bluetooth devices get room on the right for the battery level.
         let textX = 8 + circleSize + 7
+        let reserved: CGFloat = device.bluetoothAddress != nil ? 78 : 8
         let name = label(device.name)
-        name.frame = NSRect(x: textX, y: (frame.height - 18) / 2, width: frame.width - textX - 8, height: 18)
+        name.frame = NSRect(x: textX, y: (frame.height - 18) / 2, width: frame.width - textX - reserved, height: 18)
         addSubview(name)
+
+        batteryIcon.frame = NSRect(x: frame.width - 8 - 24, y: (frame.height - 18) / 2, width: 24, height: 18)
+        batteryText.alignment = .right
+        batteryText.frame = NSRect(x: batteryIcon.frame.minX - 4 - 40, y: (frame.height - 16) / 2, width: 40, height: 16)
+        batteryIcon.isHidden = true
+        batteryText.isHidden = true
+        addSubview(batteryIcon)
+        addSubview(batteryText)
 
         applyColors()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// Shows the battery level, or hides it when unknown.
+    func setBattery(_ percent: Int?) {
+        guard let percent else {
+            batteryIcon.isHidden = true
+            batteryText.isHidden = true
+            accessibilityText = deviceName
+            return
+        }
+        let symbolName: String
+        switch percent {
+        case 88...: symbolName = "battery.100percent"
+        case 63...: symbolName = "battery.75percent"
+        case 38...: symbolName = "battery.50percent"
+        case 13...: symbolName = "battery.25percent"
+        default: symbolName = "battery.0percent"
+        }
+        batteryText.stringValue = "\(percent)%"
+        batteryIcon.image = symbol(symbolName, size: 15, weight: .regular)
+        batteryIcon.contentTintColor = percent <= 20 ? .systemRed : .secondaryLabelColor
+        batteryIcon.isHidden = false
+        batteryText.isHidden = false
+        accessibilityText = "\(deviceName), battery \(percent) percent"
+    }
 
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
@@ -191,6 +229,7 @@ final class SoundPanelContent: NSView {
     let selectedDevice: AudioDeviceID
     /// Scroll events over the menu contents (the slider has no scrolling of its own).
     var onScroll: ((NSEvent) -> Void)?
+    private var rows: [AudioDeviceID: DeviceRow] = [:]
 
     override var isFlipped: Bool { true }
 
@@ -241,6 +280,7 @@ final class SoundPanelContent: NSView {
                 frame: NSRect(x: 5, y: y, width: w - 10, height: DeviceRow.height)
             )
             row.onClick = { onSelect(device) }
+            rows[device.id] = row
             addSubview(row)
             y += DeviceRow.height
         }
@@ -264,6 +304,9 @@ final class SoundPanelContent: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
     override func scrollWheel(with event: NSEvent) { onScroll?(event) }
+
+    /// Shows a device's battery level; nil hides it.
+    func setBattery(_ percent: Int?, for id: AudioDeviceID) { rows[id]?.setBattery(percent) }
 
     private func addSeparator(at y: CGFloat) {
         let line = NSBox(frame: NSRect(x: 6, y: y, width: Self.width - 12, height: 1))

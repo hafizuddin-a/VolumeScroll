@@ -24,7 +24,7 @@ if ! command -v swiftc &> /dev/null; then
 fi
 
 echo "  ⬇️  Downloading source..."
-for FILE in AppDelegate.swift AudioController.swift SoundPanel.swift main.swift make_icon.swift Info.plist; do
+for FILE in AppDelegate.swift AudioController.swift BluetoothBattery.swift SoundPanel.swift main.swift make_icon.swift Info.plist; do
     curl -fsSL "$RAW/$FILE" -o "$TMP_DIR/$FILE"
 done
 
@@ -32,7 +32,7 @@ echo "  🔨 Building..."
 cd "$TMP_DIR"
 mkdir -p "$APP_NAME/Contents/MacOS" "$APP_NAME/Contents/Resources"
 
-swiftc AppDelegate.swift AudioController.swift SoundPanel.swift main.swift \
+swiftc AppDelegate.swift AudioController.swift BluetoothBattery.swift SoundPanel.swift main.swift \
     -framework Cocoa \
     -framework CoreAudio \
     -framework ServiceManagement \

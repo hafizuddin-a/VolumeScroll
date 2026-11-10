@@ -5,6 +5,15 @@ struct OutputDevice: Equatable {
     let id: AudioDeviceID
     let name: String
     let transport: UInt32
+    var uid: String = ""
+
+    /// For Bluetooth devices CoreAudio's UID starts with the device address, e.g. "54-10-4F-CB-9D-DF:output".
+    var bluetoothAddress: String? {
+        guard transport == kAudioDeviceTransportTypeBluetooth || transport == kAudioDeviceTransportTypeBluetoothLE,
+              uid.count >= 17 else { return nil }
+        let address = uid.prefix(17).replacingOccurrences(of: "-", with: ":").uppercased()
+        return address.split(separator: ":").count == 6 ? address : nil
+    }
 
     /// SF Symbol that roughly matches what the native Sound panel shows.
     var symbolName: String {
@@ -154,7 +163,7 @@ final class AudioController {
             let transport: UInt32 = read(id, address(kAudioDevicePropertyTransportType), default: UInt32(0))
             // The native panel hides software devices such as "Microsoft Teams Audio".
             guard transport != kAudioDeviceTransportTypeVirtual else { return nil }
-            return OutputDevice(id: id, name: deviceName(id), transport: transport)
+            return OutputDevice(id: id, name: deviceName(id), transport: transport, uid: deviceUID(id))
         }
     }
 
@@ -166,6 +175,14 @@ final class AudioController {
             return "Unknown Device"
         }
         return name.takeRetainedValue() as String
+    }
+
+    private func deviceUID(_ id: AudioDeviceID) -> String {
+        var addr = address(kAudioDevicePropertyDeviceUID)
+        var uid: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &uid) == noErr, let uid else { return "" }
+        return uid.takeRetainedValue() as String
     }
 
     private func outputChannelCount(_ id: AudioDeviceID) -> Int {

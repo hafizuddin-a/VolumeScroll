@@ -10,6 +10,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// shadow, position and the status item's active highlight.
     var soundMenu: NSMenu?
     var content: SoundPanelContent?
+    var shownDevices: [OutputDevice] = []
+    /// Last known battery levels by Bluetooth address, shown instantly while a fresh reading loads.
+    var batteryCache: [String: Int] = [:]
 
     /// What the UI shows. Updated instantly on every scroll event; CoreAudio calls take several milliseconds each,
     /// so reading the system volume back on every event made the number lag and then jump.
@@ -116,8 +119,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func showSoundMenu() {
         syncFromSystem()
         refreshStatusIcon()
+        shownDevices = audio.outputDevices()
         let view = SoundPanelContent(
-            devices: audio.outputDevices(),
+            devices: shownDevices,
             selected: audio.defaultOutputDevice,
             onSelect: { [weak self] device in
                 self?.audio.setDefaultOutput(device.id)
@@ -133,6 +137,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         view.slider.onChange = { [weak self] value in self?.setUserVolume(value) }
         view.onScroll = { [weak self] event in self?.handleScroll(event) }
         content = view
+        applyBatteries(to: view)
+        refreshBatteries()
 
         let item = NSMenuItem()
         item.view = view
@@ -146,6 +152,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    /// Reads battery levels in the background. A device that has just connected may not have reported its level
+    /// yet, so a missing one is retried a couple of times while the menu stays open.
+    func refreshBatteries(retriesLeft: Int = 2) {
+        guard shownDevices.contains(where: { $0.bluetoothAddress != nil }) else { return }
+        BluetoothBattery.fetch { [weak self] levels in
+            guard let self, let open = self.content else { return }
+            if !levels.isEmpty {
+                self.batteryCache = levels
+                self.applyBatteries(to: open)
+            }
+            let missing = self.shownDevices.contains { device in
+                device.bluetoothAddress.map { levels[$0] == nil } ?? false
+            }
+            if missing, retriesLeft > 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+                    guard self?.content != nil else { return }
+                    self?.refreshBatteries(retriesLeft: retriesLeft - 1)
+                }
+            }
+        }
+    }
+
+    func applyBatteries(to view: SoundPanelContent) {
+        for device in shownDevices {
+            guard let address = device.bluetoothAddress else { continue }
+            view.setBattery(batteryCache[address], for: device.id)
+        }
     }
 
     func menuDidClose(_ menu: NSMenu) {
