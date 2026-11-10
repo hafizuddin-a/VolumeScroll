@@ -1,34 +1,27 @@
 import Cocoa
 import ServiceManagement
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem!
-    var currentVolume: Float = 0.5
-    var globalMonitor: Any?
-    var localMonitor: Any?
-    var volumeSyncTimer: Timer?
-    var lastScrollTime: TimeInterval = 0
-    var popover: NSPopover?
-    var sliderController: SliderViewController?
+    let audio = AudioController()
+    var monitors: [Any] = []
+
+    /// The Sound menu while it is open. It is a real NSMenu, so the system draws the glass, corners,
+    /// shadow, position and the status item's active highlight.
+    var soundMenu: NSMenu?
+    var content: SoundPanelContent?
 
     var launchAtLogin: Bool {
-        get {
-            if #available(macOS 13.0, *) {
-                return SMAppService.mainApp.status == .enabled
-            }
-            return false
-        }
+        get { SMAppService.mainApp.status == .enabled }
         set {
-            if #available(macOS 13.0, *) {
-                do {
-                    if newValue {
-                        try SMAppService.mainApp.register()
-                    } else {
-                        try SMAppService.mainApp.unregister()
-                    }
-                } catch {
-                    NSLog("Launch at login error: \(error)")
+            do {
+                if newValue {
+                    try SMAppService.mainApp.register()
+                } else {
+                    try SMAppService.mainApp.unregister()
                 }
+            } catch {
+                NSLog("Launch at login error: \(error)")
             }
         }
     }
@@ -42,132 +35,141 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         button.action = #selector(handleClick)
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
 
-        currentVolume = getVolume()
-        updateLabel()
-        startVolumeSync()
+        audio.onChange = { [weak self] in self?.audioChanged() }
+        audio.start()
+        refreshStatusIcon()
 
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            self?.handleScroll(event)
-            return event
-        }
+        // Local monitors see events aimed at our own windows (status item, open menu);
+        // global monitors see events aimed at every other app.
+        if let m = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] event in
+            (self?.handleScroll(event) ?? false) ? nil : event
+        }) { monitors.append(m) }
 
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-            self?.handleScroll(event)
-        }
-
-        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            self?.closePopover()
-        }
+        if let m = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel, handler: { [weak self] event in
+            _ = self?.handleScroll(event)
+        }) { monitors.append(m) }
     }
+
+    // MARK: - Status item
 
     @objc func handleClick(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
         if event.type == .rightMouseUp {
-            closePopover()
             showMenu()
         } else {
-            togglePopover()
+            showSoundMenu()
         }
     }
 
-    // MARK: - Popover
+    func refreshStatusIcon() {
+        guard let button = statusItem.button else { return }
+        let pct = Int((audio.volume * 100).rounded())
+        let name: String
+        switch (audio.isMuted, pct) {
+        case (true, _), (_, 0): name = "speaker.slash.fill"
+        case (_, 1...33): name = "speaker.wave.1.fill"
+        case (_, 34...66): name = "speaker.wave.2.fill"
+        default: name = "speaker.wave.3.fill"
+        }
+        let image = NSImage(systemSymbolName: name, accessibilityDescription: "Volume")?
+            .withSymbolConfiguration(.init(pointSize: 14, weight: .regular))
+        image?.isTemplate = true
+        button.image = image
+        button.imagePosition = .imageLeft
+        button.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+        button.title = (audio.isMuted || pct == 0) ? " Muted" : " \(pct)%"
+    }
 
-    func togglePopover() {
-        if let popover = popover, popover.isShown {
-            closePopover()
-        } else {
-            showPopover()
+    // MARK: - Sound menu
+
+    func showSoundMenu() {
+        let view = SoundPanelContent(
+            devices: audio.outputDevices(),
+            selected: audio.defaultOutputDevice,
+            onSelect: { [weak self] device in
+                self?.audio.setDefaultOutput(device.id)
+                self?.soundMenu?.cancelTracking()
+            },
+            onOpenSettings: { [weak self] in
+                self?.soundMenu?.cancelTracking()
+                self?.openSoundSettings()
+            }
+        )
+        view.slider.value = audio.volume
+        view.slider.isEnabled = audio.canSetVolume
+        view.slider.onChange = { [weak self] value in
+            self?.audio.setVolume(value)
+            self?.refreshStatusIcon()
+        }
+        view.onScroll = { [weak self] event in self?.handleScroll(event) }
+        content = view
+
+        let item = NSMenuItem()
+        item.view = view
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.delegate = self
+        menu.addItem(item)
+        soundMenu = menu
+
+        // Showing it through the status item gives the native anchoring and active highlight.
+        statusItem.menu = menu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        if menu === soundMenu {
+            soundMenu = nil
+            content = nil
         }
     }
 
-    func showPopover() {
-        let vc = SliderViewController()
-        vc.volume = currentVolume
-        vc.onVolumeChange = { [weak self] vol in
-            self?.currentVolume = vol
-            self?.setVolume(vol)
-            self?.updateLabel()
-        }
-        sliderController = vc
-
-        let pop = NSPopover()
-        pop.contentViewController = vc
-        pop.contentSize = NSSize(width: 220, height: 72)
-        pop.behavior = .transient
-        pop.animates = true
-        pop.appearance = NSAppearance.current
-
-        if let button = statusItem.button {
-            pop.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        }
-        popover = pop
+    func audioChanged() {
+        refreshStatusIcon()
+        content?.slider.value = audio.volume
+        content?.slider.isEnabled = audio.canSetVolume
     }
 
-    func closePopover() {
-        popover?.close()
-        popover = nil
-        sliderController = nil
+    func openSoundSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Sound-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     // MARK: - Scroll
 
-    func handleScroll(_ event: NSEvent) {
-        guard let button = statusItem.button,
-              let buttonWindow = button.window else { return }
+    /// Changes the volume if the cursor is over the menu bar icon or the open Sound menu.
+    /// Returns true when the event was ours (so a local monitor can swallow it).
+    @discardableResult
+    func handleScroll(_ event: NSEvent) -> Bool {
+        let mouse = NSEvent.mouseLocation
 
-        let mouseLocation = NSEvent.mouseLocation
-        let buttonFrameInScreen = buttonWindow.convertToScreen(
-            button.convert(button.bounds, to: nil)
-        )
-        guard buttonFrameInScreen.contains(mouseLocation) else { return }
-
-        let now = event.timestamp
-        let isTrackpad = event.phase != []
-
-        if isTrackpad {
-            guard event.phase == .changed || event.phase == .began else { return }
-            guard (now - lastScrollTime) > 0.15 else { return }
-        } else {
-            guard (now - lastScrollTime) > 0.08 else { return }
+        var overIcon = false
+        if let button = statusItem.button, let window = button.window {
+            overIcon = window.convertToScreen(button.convert(button.bounds, to: nil)).contains(mouse)
         }
+        let overMenu = content?.window?.frame.contains(mouse) ?? false
+        guard overIcon || overMenu else { return false }
 
-        let delta = event.deltaY
-        guard abs(delta) > 0.01 else { return }
+        // Trackpad momentum would keep nudging the volume after the fingers lift.
+        guard event.momentumPhase.isEmpty else { return true }
 
-        lastScrollTime = now
+        // Make physical "up" (wheel away, or fingers up) mean louder regardless of
+        // the natural-scrolling setting.
+        var delta = event.scrollingDeltaY
+        if event.isDirectionInvertedFromDevice { delta = -delta }
+        guard delta != 0 else { return true }
 
-        let step: Float = 0.03
-        if delta > 0 {
-            currentVolume = min(1.0, currentVolume + step)
-        } else {
-            currentVolume = max(0.0, currentVolume - step)
-        }
+        let change: Float = event.hasPreciseScrollingDeltas
+            ? Float(delta) * 0.004
+            : (delta > 0 ? 1 : -1) * (1.0 / 16.0)
 
-        setVolume(currentVolume)
-        updateLabel()
-        sliderController?.volume = currentVolume
-    }
-
-    // MARK: - Label
-
-    func updateLabel() {
-        DispatchQueue.main.async {
-            let pct = Int(self.currentVolume * 100)
-            if let button = self.statusItem.button {
-                let symbolName: String
-                switch pct {
-                case 0:       symbolName = "speaker.slash.fill"
-                case 1...33:  symbolName = "speaker.wave.1.fill"
-                case 34...66: symbolName = "speaker.wave.2.fill"
-                default:      symbolName = "speaker.wave.3.fill"
-                }
-                let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
-                button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
-                    .withSymbolConfiguration(config)
-                button.imagePosition = .imageLeft
-                button.title = pct == 0 ? " Muted" : " \(pct)%"
-            }
-        }
+        let newVolume = min(1, max(0, audio.volume + change))
+        audio.setVolume(newVolume)
+        content?.slider.value = newVolume
+        refreshStatusIcon()
+        return true
     }
 
     // MARK: - Right-click menu
@@ -175,32 +177,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func showMenu() {
         let menu = NSMenu()
 
-        let pct = Int(currentVolume * 100)
-        let headerItem = NSMenuItem(title: "Volume: \(pct)%", action: nil, keyEquivalent: "")
-        headerItem.isEnabled = false
-        menu.addItem(headerItem)
-
+        let pct = Int((audio.volume * 100).rounded())
+        let header = NSMenuItem(title: "Volume: \(pct)%", action: nil, keyEquivalent: "")
+        header.isEnabled = false
+        menu.addItem(header)
         menu.addItem(.separator())
 
-        let muteItem = NSMenuItem(
-            title: currentVolume == 0 ? "Unmute" : "Mute",
+        let mute = NSMenuItem(
+            title: audio.isMuted ? "Unmute" : "Mute",
             action: #selector(toggleMute),
             keyEquivalent: "m"
         )
-        muteItem.target = self
-        menu.addItem(muteItem)
-
+        mute.target = self
+        menu.addItem(mute)
         menu.addItem(.separator())
 
-        let loginItem = NSMenuItem(
-            title: "Open at Login",
-            action: #selector(toggleLaunchAtLogin),
-            keyEquivalent: ""
-        )
-        loginItem.target = self
-        loginItem.state = launchAtLogin ? .on : .off
-        menu.addItem(loginItem)
-
+        let login = NSMenuItem(title: "Open at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        login.target = self
+        login.state = launchAtLogin ? .on : .off
+        menu.addItem(login)
         menu.addItem(.separator())
 
         menu.addItem(NSMenuItem(
@@ -215,140 +210,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func toggleMute() {
-        currentVolume = currentVolume > 0 ? 0 : 0.5
-        setVolume(currentVolume)
-        updateLabel()
-        sliderController?.volume = currentVolume
+        audio.setMuted(!audio.isMuted)
+        refreshStatusIcon()
     }
 
     @objc func toggleLaunchAtLogin() {
         launchAtLogin = !launchAtLogin
     }
 
-    // MARK: - Audio
-
-    func startVolumeSync() {
-        volumeSyncTimer?.invalidate()
-        volumeSyncTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            self?.syncVolumeFromSystemIfNeeded()
-        }
-        if let timer = volumeSyncTimer {
-            RunLoop.main.add(timer, forMode: .common)
-        }
-    }
-
-    func syncVolumeFromSystemIfNeeded() {
-        let systemVolume = getVolume()
-        guard abs(systemVolume - currentVolume) > 0.01 else { return }
-        currentVolume = systemVolume
-        updateLabel()
-        sliderController?.volume = systemVolume
-    }
-
-    func getVolume() -> Float {
-        let script = NSAppleScript(source: "output volume of (get volume settings)")!
-        var error: NSDictionary?
-        let result = script.executeAndReturnError(&error)
-        return error == nil ? Float(result.int32Value) / 100.0 : 0.5
-    }
-
-    func setVolume(_ volume: Float) {
-        let pct = Int(volume * 100)
-        let script = NSAppleScript(source: "set volume output volume \(pct)")!
-        var error: NSDictionary?
-        script.executeAndReturnError(&error)
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
-        volumeSyncTimer?.invalidate()
-        volumeSyncTimer = nil
-        if let m = globalMonitor { NSEvent.removeMonitor(m) }
-        if let m = localMonitor { NSEvent.removeMonitor(m) }
-    }
-}
-
-// MARK: - Slider Popover
-
-class SliderViewController: NSViewController {
-    var onVolumeChange: ((Float) -> Void)?
-    private var slider: NSSlider!
-    private var iconView: NSImageView!
-    private var percentLabel: NSTextField!
-
-    var volume: Float = 0.5 {
-        didSet {
-            DispatchQueue.main.async {
-                self.slider?.floatValue = self.volume * 100
-                self.updateIcon()
-                self.updatePercent()
-            }
-        }
-    }
-
-    override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 72))
-        container.wantsLayer = true
-        container.layer?.cornerRadius = 14
-        container.layer?.masksToBounds = true
-
-        let material = NSVisualEffectView(frame: container.bounds)
-        material.material = .menu
-        material.blendingMode = .behindWindow
-        material.state = .active
-        material.autoresizingMask = [.width, .height]
-        container.addSubview(material)
-
-        iconView = NSImageView(frame: NSRect(x: 16, y: 24, width: 22, height: 22))
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        container.addSubview(iconView)
-
-        slider = NSSlider(frame: NSRect(x: 46, y: 26, width: 128, height: 20))
-        slider.minValue = 0
-        slider.maxValue = 100
-        slider.floatValue = volume * 100
-        slider.isContinuous = true
-        slider.target = self
-        slider.action = #selector(sliderChanged)
-        container.addSubview(slider)
-
-        percentLabel = NSTextField(frame: NSRect(x: 178, y: 25, width: 36, height: 20))
-        percentLabel.isEditable = false
-        percentLabel.isBezeled = false
-        percentLabel.drawsBackground = false
-        percentLabel.alignment = .right
-        percentLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .medium)
-        percentLabel.textColor = .secondaryLabelColor
-        container.addSubview(percentLabel)
-
-        updateIcon()
-        updatePercent()
-        self.view = container
-    }
-
-    @objc func sliderChanged() {
-        volume = slider.floatValue / 100
-        onVolumeChange?(volume)
-        updateIcon()
-        updatePercent()
-    }
-
-    func updateIcon() {
-        let pct = Int(volume * 100)
-        let symbolName: String
-        switch pct {
-        case 0:       symbolName = "speaker.slash.fill"
-        case 1...33:  symbolName = "speaker.wave.1.fill"
-        case 34...66: symbolName = "speaker.wave.2.fill"
-        default:      symbolName = "speaker.wave.3.fill"
-        }
-        let config = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-            .applying(.init(paletteColors: [.controlAccentColor]))
-        iconView?.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
-            .withSymbolConfiguration(config)
-    }
-
-    func updatePercent() {
-        let pct = Int(volume * 100)
-        percentLabel?.stringValue = "\(pct)%"
+        monitors.forEach(NSEvent.removeMonitor)
     }
 }

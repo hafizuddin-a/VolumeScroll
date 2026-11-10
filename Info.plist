@@ -20,7 +20,7 @@
     <string>NSApplication</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
-    <key>NSAppleEventsUsageDescription</key>
-    <string>VolumeScroll uses AppleScript to control system volume.</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
 </dict>
 </plist>
