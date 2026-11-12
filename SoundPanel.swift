@@ -40,7 +40,28 @@ final class VolumeSlider: NSView {
         NSGraphicsContext.restoreGraphicsState()
     }
 
-    override func mouseDown(with event: NSEvent) { update(from: event) }
+    /// Follows the mouse until the button is released, wherever it goes. Inside a menu the view only receives drag
+    /// events while the cursor stays within it, so a fast drag that strays above, below or outside the menu would
+    /// freeze the slider. Like a real slider, this runs its own tracking loop from mouseDown.
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        update(from: event)
+        guard let window else { return }
+
+        // Waiting at most 100 ms per event and checking the button state means this can never hang.
+        while NSEvent.pressedMouseButtons & 1 != 0 {
+            guard let next = window.nextEvent(
+                matching: [.leftMouseDragged, .leftMouseUp],
+                until: Date(timeIntervalSinceNow: 0.1),
+                inMode: .eventTracking,
+                dequeue: true
+            ) else { continue }
+            if next.type == .leftMouseUp { break }
+            update(from: next)
+            displayIfNeeded()
+        }
+    }
+
     override func mouseDragged(with event: NSEvent) { update(from: event) }
 
     override func isAccessibilityElement() -> Bool { true }
