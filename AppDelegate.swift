@@ -136,6 +136,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         view.slider.isEnabled = audio.canSetVolume
         view.slider.onChange = { [weak self] value in self?.setUserVolume(value) }
         view.onScroll = { [weak self] event in self?.handleScroll(event) }
+        view.onMute = { [weak self] in self?.setUserVolume(0, animated: true) }
+        view.onMax = { [weak self] in self?.setUserVolume(1, animated: true) }
         content = view
         applyBatteries(to: view)
         refreshBatteries()

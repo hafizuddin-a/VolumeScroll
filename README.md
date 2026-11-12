@@ -90,6 +90,7 @@ under **Allow in the Menu Bar**.
 | Scroll down over the icon or the open menu | Volume down |
 | Left click the icon | Open the Sound menu |
 | Click a device in the menu | Switch the output device |
+| Click the speaker icon at the left or right of the slider | Mute, or jump to maximum volume |
 | Right click the icon | Menu (mute, open at login, quit) |
 
 ## Build from source

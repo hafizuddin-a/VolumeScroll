@@ -219,6 +219,27 @@ private final class DeviceRow: HoverRow {
     }
 }
 
+// MARK: - Icon buttons
+
+/// A speaker icon that works as a button, with a larger click area than the glyph itself.
+private final class IconButton: NSImageView {
+    var onClick: (() -> Void)?
+    var accessibilityText: String?
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { alphaValue = 0.55 }
+
+    override func mouseUp(with event: NSEvent) {
+        alphaValue = 1
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { onClick?() }
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? { accessibilityText }
+    override func accessibilityPerformPress() -> Bool { onClick?(); return true }
+}
+
 // MARK: - Panel content
 
 /// The contents of the Sound menu. Laid out by hand (fixed row heights), so it sizes itself without Auto Layout.
@@ -229,6 +250,9 @@ final class SoundPanelContent: NSView {
     let selectedDevice: AudioDeviceID
     /// Scroll events over the menu contents (the slider has no scrolling of its own).
     var onScroll: ((NSEvent) -> Void)?
+    /// The speaker icons at either end of the slider: all the way down, and all the way up.
+    var onMute: (() -> Void)?
+    var onMax: (() -> Void)?
     private var rows: [AudioDeviceID: DeviceRow] = [:]
 
     override var isFlipped: Bool { true }
@@ -251,14 +275,19 @@ final class SoundPanelContent: NSView {
         addSubview(title)
         y = 29
 
-        let low = NSImageView(image: symbol("speaker.fill", size: 15) ?? NSImage())
+        // Click areas are wider than the glyphs but stop where the slider starts and ends.
+        let low = IconButton(image: symbol("speaker.fill", size: 15) ?? NSImage())
         low.contentTintColor = .secondaryLabelColor
-        low.frame = NSRect(x: 14, y: y + 2, width: 16, height: 20)
+        low.frame = NSRect(x: 10, y: y, width: 24, height: 24)
+        low.accessibilityText = "Mute"
+        low.onClick = { [weak self] in self?.onMute?() }
         addSubview(low)
 
-        let high = NSImageView(image: symbol("speaker.wave.3.fill", size: 15) ?? NSImage())
+        let high = IconButton(image: symbol("speaker.wave.3.fill", size: 15) ?? NSImage())
         high.contentTintColor = .secondaryLabelColor
-        high.frame = NSRect(x: w - 12 - 24, y: y + 2, width: 24, height: 20)
+        high.frame = NSRect(x: w - 38, y: y, width: 28, height: 24)
+        high.accessibilityText = "Maximum volume"
+        high.onClick = { [weak self] in self?.onMax?() }
         addSubview(high)
 
         slider.frame = NSRect(x: 34, y: y, width: w - 34 - 40, height: 24)
