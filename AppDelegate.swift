@@ -26,6 +26,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var targetVolume: Float = 0.5
     private var easeTimer: Timer?
 
+    /// Bumped on every user change. A background read of the system volume is only applied if the token is still
+    /// the same when it finishes, so a slow (e.g. Bluetooth) device's stale values can never overwrite the user's.
+    private var interactionToken = 0
+    private var syncPending = false
+    private var renderScheduled = false
+
     /// What the menu bar item currently shows, so it is only touched when something actually changes.
     private var shownSymbol = ""
     private var shownTitle = ""
@@ -117,8 +123,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Sound menu
 
     func showSoundMenu() {
-        syncFromSystem()
-        refreshStatusIcon()
+        scheduleSystemSync()
         shownDevices = audio.outputDevices()
         let view = SoundPanelContent(
             devices: shownDevices,
@@ -133,11 +138,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         )
         view.slider.value = currentVolume
-        view.slider.isEnabled = audio.canSetVolume
         view.slider.onChange = { [weak self] value in self?.setUserVolume(value) }
         view.onScroll = { [weak self] event in self?.handleScroll(event) }
-        view.onMute = { [weak self] in self?.setUserVolume(0, animated: true) }
-        view.onMax = { [weak self] in self?.setUserVolume(1, animated: true) }
+        // The icons jump straight to the ends (no easing, unlike scrolling).
+        view.onMute = { [weak self] in self?.setUserVolume(0) }
+        view.onMax = { [weak self] in self?.setUserVolume(1) }
         content = view
         applyBatteries(to: view)
         refreshBatteries()
@@ -171,8 +176,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             if missing, retriesLeft > 0 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
-                    guard self?.content != nil else { return }
-                    self?.refreshBatteries(retriesLeft: retriesLeft - 1)
+                    guard let self, self.content != nil else { return }
+                    // Not while the user is scrolling: keep the main run loop and the CPU free for that.
+                    guard self.easeTimer == nil, ProcessInfo.processInfo.systemUptime - self.lastUserChange > 1 else { return }
+                    self.refreshBatteries(retriesLeft: retriesLeft - 1)
                 }
             }
         }
@@ -193,13 +200,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// CoreAudio reports changes, including the echo of our own writes. While the user is scrolling or dragging our
-    /// cached value is ahead of those echoes, so they are ignored until things settle.
+    /// value is ahead of those echoes, so they are ignored until things settle.
     func audioChanged() {
         guard easeTimer == nil, ProcessInfo.processInfo.systemUptime - lastUserChange > 0.5 else { return }
-        syncFromSystem()
-        refreshStatusIcon()
-        content?.slider.value = currentVolume
-        content?.slider.isEnabled = audio.canSetVolume
+        scheduleSystemSync()
+    }
+
+    /// Reads the real volume on the audio queue, so a slow device can never stall the main thread. The queue is
+    /// serial, so the read runs after any pending writes.
+    func scheduleSystemSync() {
+        guard !syncPending else { return }
+        syncPending = true
+        let token = interactionToken
+        audioQueue.async { [weak self] in
+            guard let self else { return }
+            let volume = self.audio.volume
+            let muted = self.audio.isMuted
+            let settable = self.audio.canSetVolume
+            DispatchQueue.main.async {
+                self.syncPending = false
+                // The user acted while we were reading: their value is newer than ours.
+                guard token == self.interactionToken, self.easeTimer == nil else { return }
+                self.currentVolume = volume
+                self.targetVolume = volume
+                self.currentMuted = muted
+                self.refreshStatusIcon()
+                self.content?.slider.value = volume
+                self.content?.slider.isEnabled = settable
+            }
+        }
     }
 
     func syncFromSystem() {
@@ -211,6 +240,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The one path for user-driven changes. Scrolling sets a target the volume eases toward; dragging the slider
     /// applies directly, because the slider already follows the pointer.
     func setUserVolume(_ newValue: Float, animated: Bool = false) {
+        interactionToken += 1
         targetVolume = min(1, max(0, newValue))
         if targetVolume > 0 { currentMuted = false }
         lastUserChange = ProcessInfo.processInfo.systemUptime
@@ -219,7 +249,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             stopEasing()
             currentVolume = targetVolume
-            render()
+            content?.slider.value = currentVolume   // the knob follows the pointer immediately
+            scheduleRender()
         }
         scheduleResync()
     }
@@ -248,6 +279,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         render()
     }
 
+    /// Dragging produces mouse events far faster than the menu bar can take updates (the same flood that made the
+    /// number freeze and then leap while scrolling), so push to the menu bar and CoreAudio at most once per frame.
+    private func scheduleRender() {
+        guard !renderScheduled else { return }
+        renderScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0 / 60.0) { [weak self] in
+            guard let self else { return }
+            self.renderScheduled = false
+            self.render()
+        }
+    }
+
     /// Pushes `currentVolume` to the slider, the menu bar and (in the background) to CoreAudio.
     private func render() {
         content?.slider.value = currentVolume
@@ -266,9 +309,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard self.easeTimer == nil else { self.scheduleResync(); return }
-            self.syncFromSystem()
-            self.refreshStatusIcon()
-            self.content?.slider.value = self.currentVolume
+            self.scheduleSystemSync()
         }
         resyncWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7, execute: work)
